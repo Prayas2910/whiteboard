@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Online Whiteboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100">
+  <div class="mx-auto flex max-w-7xl flex-col gap-4 p-4">
+    <div class="rounded-2xl border border-slate-800 bg-slate-900/90 p-3 shadow-2xl">
+      <div class="flex flex-wrap items-center gap-2">
+        <button data-tool="draw" class="tool rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500">Draw</button>
+        <button data-tool="rect" class="tool rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Rect</button>
+        <button data-tool="circle" class="tool rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Circle</button>
+        <button data-tool="line" class="tool rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Line</button>
+        <button data-tool="eraser" class="tool rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Eraser</button>
+        <div class="mx-2 h-6 w-px bg-slate-700"></div>
+        <label class="flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
+          Color <input id="color" type="color" value="#60a5fa" class="h-6 w-8 cursor-pointer rounded border-0 bg-transparent" />
+        </label>
+        <label class="flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm">
+          Size <input id="size" type="range" min="1" max="50" value="4" class="accent-indigo-500" />
+        </label>
+        <div class="mx-2 h-6 w-px bg-slate-700"></div>
+        <button id="undo" class="rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Undo</button>
+        <button id="redo" class="rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700">Redo</button>
+        <button id="clear" class="rounded-lg bg-rose-700 px-3 py-2 text-sm hover:bg-rose-600">Clear</button>
+        <button id="download" class="rounded-lg bg-emerald-700 px-3 py-2 text-sm hover:bg-emerald-600">Download PNG</button>
+      </div>
+    </div>
+    <div class="overflow-hidden rounded-2xl border border-slate-800 bg-white shadow-2xl">
+      <canvas id="board"></canvas>
+    </div>
+  </div>
+
+  <script>
+    const canvasEl = document.getElementById("board");
+    const wrapper = canvasEl.parentElement;
+    const canvas = new fabric.Canvas("board", { backgroundColor: "#ffffff", isDrawingMode: true, preserveObjectStacking: true });
+    const colorInput = document.getElementById("color");
+    const sizeInput = document.getElementById("size");
+    const tools = document.querySelectorAll(".tool");
+    const state = { tool: "draw", drawing: null, undo: [], redo: [], restoring: false };
+
+    const resize = () => {
+      const w = wrapper.clientWidth;
+      const h = Math.max(560, window.innerHeight - 140);
+      canvas.setWidth(w);
+      canvas.setHeight(h);
+      canvas.renderAll();
+      save();
+    };
+
+    const setBrush = () => {
+      canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+      canvas.freeDrawingBrush.color = state.tool === "eraser" ? "#ffffff" : colorInput.value;
+      canvas.freeDrawingBrush.width = +sizeInput.value;
+    };
+
+    const setActive = (tool) => {
+      state.tool = tool;
+      tools.forEach(b => b.classList.toggle("bg-indigo-600", b.dataset.tool === tool));
+      tools.forEach(b => b.classList.toggle("bg-slate-800", b.dataset.tool !== tool));
+      canvas.isDrawingMode = tool === "draw" || tool === "eraser";
+      canvas.selection = tool === "draw" || tool === "eraser";
+      canvas.forEachObject(o => o.selectable = !(tool === "draw" || tool === "eraser"));
+      setBrush();
+    };
+
+    const save = () => {
+      if (state.restoring) return;
+      state.undo.push(JSON.stringify(canvas.toJSON()));
+      if (state.undo.length > 80) state.undo.shift();
+      state.redo = [];
+    };
+
+    const load = (snap) => {
+      state.restoring = true;
+      canvas.loadFromJSON(snap, () => {
+        state.restoring = false;
+        canvas.renderAll();
+      });
+    };
+
+    canvas.on("path:created", save);
+    canvas.on("object:modified", save);
+    canvas.on("object:added", () => { if (!state.restoring && !canvas.isDrawingMode) save(); });
+
+    let startX = 0, startY = 0;
+    canvas.on("mouse:down", (e) => {
+      if (canvas.isDrawingMode) return;
+      const p = canvas.getPointer(e.e);
+      startX = p.x; startY = p.y;
+      if (state.tool === "rect") state.drawing = new fabric.Rect({ left: startX, top: startY, width: 1, height: 1, fill: "transparent", stroke: colorInput.value, strokeWidth: +sizeInput.value });
+      if (state.tool === "circle") state.drawing = new fabric.Ellipse({ left: startX, top: startY, rx: 1, ry: 1, fill: "transparent", stroke: colorInput.value, strokeWidth: +sizeInput.value });
+      if (state.tool === "line") state.drawing = new fabric.Line([startX, startY, startX, startY], { stroke: colorInput.value, strokeWidth: +sizeInput.value });
+      if (state.drawing) canvas.add(state.drawing);
+    });
+
+    canvas.on("mouse:move", (e) => {
+      if (!state.drawing || canvas.isDrawingMode) return;
+      const p = canvas.getPointer(e.e);
+      if (state.tool === "rect") {
+        state.drawing.set({ left: Math.min(startX, p.x), top: Math.min(startY, p.y), width: Math.abs(startX - p.x), height: Math.abs(startY - p.y) });
+      } else if (state.tool === "circle") {
+        state.drawing.set({ left: Math.min(startX, p.x), top: Math.min(startY, p.y), rx: Math.abs(startX - p.x) / 2, ry: Math.abs(startY - p.y) / 2 });
+      } else if (state.tool === "line") {
+        state.drawing.set({ x2: p.x, y2: p.y });
+      }
+      canvas.renderAll();
+    });
+
+    canvas.on("mouse:up", () => {
+      if (!state.drawing || canvas.isDrawingMode) return;
+      state.drawing = null;
+      save();
+    });
+
+    document.getElementById("undo").onclick = () => {
+      if (state.undo.length < 2) return;
+      state.redo.push(state.undo.pop());
+      load(state.undo[state.undo.length - 1]);
+    };
+
+    document.getElementById("redo").onclick = () => {
+      if (!state.redo.length) return;
+      const snap = state.redo.pop();
+      state.undo.push(snap);
+      load(snap);
+    };
+
+    document.getElementById("clear").onclick = () => {
+      canvas.clear();
+      canvas.backgroundColor = "#ffffff";
+      setBrush();
+      canvas.renderAll();
+      save();
+    };
+
+    document.getElementById("download").onclick = () => {
+      const a = document.createElement("a");
+      a.href = canvas.toDataURL({ format: "png", quality: 1 });
+      a.download = "whiteboard.png";
+      a.click();
+    };
+
+    colorInput.oninput = setBrush;
+    sizeInput.oninput = setBrush;
+    tools.forEach(btn => btn.onclick = () => setActive(btn.dataset.tool));
+    window.addEventListener("resize", resize);
+
+    resize();
+    setActive("draw");
+    save();
+  </script>
+</body>
+</html>
